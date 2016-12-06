@@ -92,7 +92,7 @@ int RGWGetObj_ObjStore_S3Website::send_response_data(bufferlist& bl, off_t bl_of
   if (iter != attrs.end()) {
     bufferlist &bl = iter->second;
     s->redirect = string(bl.c_str(), bl.length());
-    s->err->http_ret = 301;
+    s->err.http_ret = 301;
     ldout(s->cct, 20) << __CEPH_ASSERT_FUNCTION << " redirecting per x-amz-website-redirect-location=" << s->redirect << dendl;
     op_ret = -ERR_WEBSITE_REDIRECT;
     s->set_req_state_err(op_ret);
@@ -2115,7 +2115,7 @@ done:
     s->formatter->dump_string("Key", s->object.name);
     s->formatter->close_section();
   }
-  s->err->message = err_msg;
+  s->err = s3_err(s, "", std::move(err_msg));
   s->set_req_state_err(op_ret);
   dump_errno(s);
   if (op_ret >= 0) {
@@ -4222,7 +4222,7 @@ int RGWHandler_REST_S3Website::retarget(RGWOp* op, RGWOp** new_op) {
 		    &redirect_code);
     // APply a custom HTTP response code
     if (redirect_code > 0)
-      s->err->http_ret = redirect_code; // Apply a custom HTTP response code
+      s->err.http_ret = redirect_code; // Apply a custom HTTP response code
     ldout(s->cct, 10) << "retarget redirect code=" << redirect_code
 		      << " proto+host:" << protocol << "://" << hostname
 		      << " -> " << s->redirect << dendl;
@@ -4345,7 +4345,7 @@ int RGWHandler_REST_S3Website::error_handler(int err_no,
 		    &redirect_code);
     // Apply a custom HTTP response code
     if (redirect_code > 0)
-      s->err->http_ret = redirect_code; // Apply a custom HTTP response code
+      s->err.http_ret = redirect_code; // Apply a custom HTTP response code
     ldout(s->cct, 10) << "error handler redirect code=" << redirect_code
 		      << " proto+host:" << protocol << "://" << hostname
 		      << " -> " << s->redirect << dendl;

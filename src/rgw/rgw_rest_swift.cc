@@ -33,22 +33,6 @@
 
 #define dout_subsys ceph_subsys_rgw
 
-struct swift_err : public rgw_err {
-  swift_err(struct req_state *s) : rgw_err(s) {};
-
-  virtual bool set_rgw_err(int err_no) {
-    rgw_http_errors::const_iterator r;
-
-    r = rgw_http_swift_errors.find(err_no);
-    if (r != rgw_http_swift_errors.end()) {
-      http_ret = r->second.first;
-      s3_code = r->second.second;
-      return true;
-    }
-    return rgw_err::set_rgw_err(err_no);
-  }
-};
-
 int RGWListBuckets_ObjStore_SWIFT::get_params()
 {
   marker = s->info.args.get("marker");
@@ -972,7 +956,7 @@ static void bulkdelete_respond(const unsigned num_deleted,
       }
     }
 
-    swift_err err(s);
+    rgw_err err = swift_err{s};
     err.set_rgw_err(reason);
     dump_errno(err, resp_status);
   } else if (0 == num_deleted && 0 == num_unfound) {
@@ -997,7 +981,7 @@ static void bulkdelete_respond(const unsigned num_deleted,
     ss_name << fail_desc.path;
     encode_json("Name", ss_name.str(), s->formatter);
 
-    swift_err err(s);
+    rgw_err err = swift_err{s};
     err.set_rgw_err(fail_desc.err);
     string status;
     dump_errno(err, status);
@@ -2242,8 +2226,7 @@ int RGWHandler_REST_SWIFT::init_from_header(struct req_state* const s,
   string req;
   string first;
 
-  assert(!s->err);
-  s->err = new swift_err(s);
+  s->err = swift_err{s};
   s->prot_flags |= RGW_REST_SWIFT;
 
   char reqbuf[frontend_prefix.length() + s->decoded_uri.length() + 1];

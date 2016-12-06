@@ -266,24 +266,57 @@ enum RGWObjCategory {
   RGW_OBJ_CATEGORY_MULTIMETA = 3,
 };
 
+struct s3_err {
+public:
+  struct req_state* s;
+  std::string s3_code;
+  std::string message;
+
+  s3_err() = default;
+  s3_err(struct req_state* s) : s(s) {};
+  s3_err(struct req_state* s, std::string s3_code, std::string message) : s(s), s3_code(s3_code), message(message) {}
+};
+
+struct swift_err {
+public:
+  struct req_state* s;
+  std::string swift_code;
+  std::string message;
+
+  swift_err() = default;
+  swift_err(struct req_state* s) : s(s) {};
+  swift_err(struct req_state* s,std::string swift_code, std::string message) : s(s), swift_code(swift_code), message(message) {}
+};
+
 /** Store error returns for output at a different point in the program */
 struct rgw_err {
-  rgw_err(req_state *s);
+  rgw_err(req_state* s);
   virtual ~rgw_err() { };
   void clear();
   bool is_clear() const;
   bool is_err() const;
   friend std::ostream& operator<<(std::ostream& oss, const rgw_err &err);
   virtual void dump() const;
-  virtual bool set_rgw_err(int);
-
-  req_state &s;
+  req_state *s;
   bool is_website_redirect;
   int http_ret;
   int ret;
-  std::string s3_code;
-  std::string message;
+
+  boost::variant<s3_err, swift_err> extra;
+  rgw_err(s3_err err) : extra(std::move(err)) { s = err.s;}
+  rgw_err(swift_err err) : extra(std::move(err)) { s = err.s;}
+
+  rgw_err& operator=(s3_err err) { extra = std::move(err); return *this; }
+  rgw_err& operator=(swift_err err) { extra = std::move(err); return *this; }
+
+  bool set_rgw_err(int err_no);
+  const string& get_err_message() const;
+  void set_err_message(const string& err_msg);
+  const string& get_err_code() const;
+  void set_err_code(const string& err_code);
 };
+
+
 
 /* Helper class used for RGWHTTPArgs parsing */
 class NameVal
@@ -1289,7 +1322,7 @@ struct req_state {
   const char *length;
   int64_t content_length;
   map<string, string> generic_attrs;
-  rgw_err *err;
+  rgw_err err;
   bool expect_cont;
   bool header_ended;
   uint64_t obj_size;
@@ -1376,7 +1409,7 @@ struct req_state {
 
   void set_req_state_err(int err_no);
   void set_req_state_err(int err_no, const string &err_msg);
-  bool is_err() const { return err && err->is_err(); }
+  bool is_err() const { return err.is_err(); }
 };
 void set_req_state_err(struct rgw_err&, int, const int);
 

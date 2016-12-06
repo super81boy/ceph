@@ -372,7 +372,7 @@ void dump_errno(const struct rgw_err &err, string& out) {
 
 void dump_errno(struct req_state *s)
 {
-  dump_status(s, s->err->http_ret, http_status_names[s->err->http_ret]);
+  dump_status(s, s->err.http_ret, http_status_names[s->err.http_ret]);
 }
 
 void dump_errno(struct req_state *s, int http_ret)
@@ -706,7 +706,7 @@ void end_header(struct req_state* s, boost::function<void()> dump_more,
   }
   if (!force_no_error && s->is_err()) {
     dump_start(s);
-    s->err->dump();
+    s->err.dump();
     dump_content_length(s, s->formatter->get_len());
   } else {
     if (proposed_content_length == CHUNKED_TRANSFER_ENCODING) {
@@ -754,7 +754,7 @@ void abort_early(struct req_state *s, boost::function<void()> dump_more,
   // returned 0. If non-zero, we need to continue here.
   if (err_no) {
     // Watch out, we might have a custom error state already set!
-    if (!s->err->http_ret || s->err->http_ret == 200) {
+    if (!s->err.http_ret || s->err.http_ret == 200) {
       s->set_req_state_err(err_no);
     }
     dump_errno(s);

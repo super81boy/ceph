@@ -30,9 +30,10 @@ void RGWOp_Period_Base::send_response()
   dump_errno(s);
 
   if (http_ret < 0) {
-    if (!s->err->message.empty()) {
+    const string& err_msg = s->err.get_err_message();
+    if (!err_msg.empty()) {
       ldout(s->cct, 4) << "Request failed with " << http_ret
-          << ": " << s->err->message << dendl;
+          << ": " << s->err.get_err_message() << dendl;
     }
     end_header(s);
     return;

@@ -3,6 +3,7 @@
 
 #include <errno.h>
 #include <boost/algorithm/string.hpp>
+#include <boost/variant.hpp>
 
 #include "json_spirit/json_spirit.h"
 #include "common/ceph_json.h"
@@ -137,7 +138,7 @@ void rgw_perf_stop(CephContext *cct)
 using namespace ceph::crypto;
 
 rgw_err::
-rgw_err(req_state *s) : s(*s)
+rgw_err(req_state* s) : s(s), extra(s3_err{})
 {
   clear();
 }
@@ -147,7 +148,7 @@ clear()
 {
   http_ret = 200;
   ret = 0;
-  s3_code.clear();
+  //s3_code.clear();
 }
 
 bool rgw_err::
@@ -160,6 +161,119 @@ bool rgw_err::
 is_err() const
 {
   return !(http_ret >= 200 && http_ret <= 399);
+}
+
+bool rgw_err::set_rgw_err(int err_no)
+{
+  struct visitor : public boost::static_visitor<bool> {
+    rgw_err& err;
+    const int err_no;
+    visitor(rgw_err& err, int err_no) : err(err), err_no(err_no) {}
+
+    bool operator()(s3_err& extra) {
+      if (lookup_s3_errors(err_no, err.http_ret, extra.s3_code)) {
+        return true;
+      } else {
+        return false;
+      }
+    }
+
+    bool operator()(swift_err& extra) {
+      auto i = rgw_http_swift_errors.find(err_no);
+      if (i != rgw_http_swift_errors.end()) {
+        err.http_ret = i->second.first;
+        extra.swift_code = i->second.second;
+        return true;
+      }
+      if (lookup_s3_errors(err_no, err.http_ret, extra.swift_code)) {
+        return true;
+      } else {
+        return false;
+      }
+    }
+
+  private:
+    bool lookup_s3_errors(const int& err_no, int& http_ret, string& err_code) {
+      auto j = rgw_http_s3_errors.find(err_no);
+      if (j != rgw_http_s3_errors.end()) {
+        if (!err.is_website_redirect)
+          http_ret = j->second.first;
+          err_code = j->second.second;
+        return true;
+      }
+      return false;
+    }
+  } v(*this, err_no);
+
+  return boost::apply_visitor(v, extra);
+}
+
+const string& rgw_err::get_err_message() const
+{
+  struct visitor : public boost::static_visitor<const string&> {
+
+    const string& operator()(const s3_err& extra) const {
+      return extra.message;
+    }
+
+    const string& operator()(const swift_err& extra) const {
+      return extra.message;
+    }
+  } v;
+
+  return boost::apply_visitor(v, extra);
+}
+
+void rgw_err::set_err_message(const string& err_msg)
+{
+  struct visitor : public boost::static_visitor<> {
+    const string& msg;
+    visitor(const string& msg) : msg(msg) {}
+
+    void operator()(s3_err& extra) {
+      extra.message = msg;
+    }
+
+    void operator()(swift_err& extra) {
+      extra.message = msg;
+    }
+  } v(err_msg);
+
+  return boost::apply_visitor(v, extra);
+}
+
+const string& rgw_err::get_err_code() const
+{
+  struct visitor : public boost::static_visitor<const string&> {
+
+    const string& operator()(const s3_err& extra) const {
+      return extra.s3_code;
+    }
+
+    const string& operator()(const swift_err& extra) const {
+      return extra.swift_code;
+    }
+  } v;
+
+  return boost::apply_visitor(v, extra);
+}
+
+void rgw_err::set_err_code(const string& err_code)
+{
+  struct visitor : public boost::static_visitor<> {
+    const string& code;
+    visitor(const string& code) : code(code) {}
+
+    void operator()(s3_err& extra) {
+      extra.s3_code = code;
+    }
+
+    void operator()(swift_err& extra) {
+      extra.swift_code = code;
+    }
+  } v(err_code);
+
+  return boost::apply_visitor(v, extra);
 }
 
 // The requestURI transferred from the frontend can be abs_path or absoluteURI
@@ -272,7 +386,6 @@ req_state::req_state(CephContext* _cct, RGWEnv* e, RGWUserInfo* u)
 
 req_state::~req_state() {
   delete formatter;
-  delete err;
   delete bucket_acl;
   delete object_acl;
 }
@@ -293,19 +406,19 @@ void set_req_state_err(struct rgw_err& err,	/* out */
 	<< " resorting to 500" << dendl;
 
   err.http_ret = 500;
-  err.s3_code = "UnknownError";
+  err.set_err_code("UnknownError");
 }
 
 void req_state::set_req_state_err(int err_no)
 {
-  if (!err) err = new rgw_err(this);
-  ::set_req_state_err(*err, err_no, prot_flags);
+  err = rgw_err(this);
+  ::set_req_state_err(err, err_no, prot_flags);
 }
 
 void req_state::set_req_state_err(int err_no, const string &err_msg)
 {
    set_req_state_err(err_no);
-   err->message = err_msg;
+   err.set_err_message(err_msg);
 }
 
 struct str_len {
@@ -379,39 +492,27 @@ void req_info::init_meta_info(bool *found_bad_meta)
 
 std::ostream& operator<<(std::ostream& oss, const rgw_err &err)
 {
-  oss << "rgw_err(http_ret=" << err.http_ret << ", s3='" << err.s3_code << "') ";
+  oss << "rgw_err(http_ret=" << err.http_ret << ", s3='" << err.get_err_code() << "') ";
   return oss;
 }
 
 void rgw_err::dump() const
 {
-  if (s.format != RGW_FORMAT_HTML)
-    s.formatter->open_object_section("Error");
-  if (!s3_code.empty())
-    s.formatter->dump_string("Code", s3_code);
-  if (!message.empty())
-    s.formatter->dump_string("Message", message);
-  if (!s.bucket_name.empty())	// TODO: connect to expose_bucket
-    s.formatter->dump_string("BucketName", s.bucket_name);
-  if (!s.trans_id.empty())	// TODO: connect to expose_bucket or another toggle
-    s.formatter->dump_string("RequestId", s.trans_id);
-  s.formatter->dump_string("HostId", s.host_id);
-  if (s.format != RGW_FORMAT_HTML)
-    s.formatter->close_section();
-}
-
-bool rgw_err::set_rgw_err(int err_no)
-{
-  rgw_http_errors::const_iterator r;
-
-  r = rgw_http_s3_errors.find(err_no);
-  if (r != rgw_http_s3_errors.end()) {
-    if (!is_website_redirect)
-      http_ret = r->second.first;
-    s3_code = r->second.second;
-    return true;
-  }
-  return false;
+  const string& err_code = get_err_code();
+  const string& err_message = get_err_message();
+  if (s->format != RGW_FORMAT_HTML)
+    s->formatter->open_object_section("Error");
+  if (!err_code.empty())
+    s->formatter->dump_string("Code", err_code);
+  if (!err_message.empty())
+    s->formatter->dump_string("Message", err_message);
+  if (!s->bucket_name.empty())	// TODO: connect to expose_bucket
+    s->formatter->dump_string("BucketName", s->bucket_name);
+  if (!s->trans_id.empty())	// TODO: connect to expose_bucket or another toggle
+    s->formatter->dump_string("RequestId", s->trans_id);
+  s->formatter->dump_string("HostId", s->host_id);
+  if (s->format != RGW_FORMAT_HTML)
+    s->formatter->close_section();
 }
 
 string rgw_string_unquote(const string& s)
