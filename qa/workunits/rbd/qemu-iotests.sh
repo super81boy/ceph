@@ -9,7 +9,7 @@ testlist='001 002 003 004 005 008 009 010 011 021 025 032 033 055'
 
 git clone https://github.com/qemu/qemu.git
 cd qemu
-if `lsb_release -da | grep -iq xenial`; then
+if lsb_release -da | grep -iq xenial; then
     # Xenial requires a recent test harness
     git checkout v2.3.0
 else
